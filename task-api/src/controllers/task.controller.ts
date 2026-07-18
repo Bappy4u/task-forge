@@ -1,14 +1,11 @@
 import { type Request, type Response, type NextFunction } from "express";
 import { catchAsync } from "../utils/catch.async.js";
-import type { ICreateTaskInput, TaskType } from "../types/task.ts";
 import { AppError } from "../utils/app.error.ts";
+import { taskQueue } from "../services/queue.service.js";
+import type { ICreateTaskInput } from "../types/task.ts";
+import { TASK_TYPES, TaskType } from "../types/task.ts";
 
-const ALLOWED_TASKS: TaskType[] = [
-  "IMAGE_RESIZE",
-  "VIDEO_CONVERT",
-  "PDF_GENERATION",
-  "EMAIL_SEND",
-];
+const ALLOWED_TASKS: TaskType[] = TASK_TYPES;
 
 export const createTask = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
@@ -29,22 +26,24 @@ export const createTask = catchAsync(
       );
     }
 
-    // // 2. Add the job to the BullMQ background queue
-    // // BullMQ will assign a unique job.id automatically
-    // const job = await taskQueue.add(type, payload, {
-    //   attempts: 3, // Automatically retry 3 times if the task fails
-    //   backoff: 5000, // Wait 5 seconds between retries
-    // });
+    const job = await taskQueue.add(type, payload, {
+      attempts: 3,
+      backoff: {
+        type: "fixed",
+        delay: 5000,
+      },
+      removeOnComplete: true,
+      removeOnFail: false,
+    });
 
-    // // 3. Respond immediately with a 202 (Accepted for processing) status
-    // res.status(202).json({
-    //   success: true,
-    //   message: "Task successfully scheduled for background execution.",
-    //   data: {
-    //     taskId: job.id,
-    //     type: job.name,
-    //     status: "queued",
-    //   },
-    // });
+    res.status(202).json({
+      success: true,
+      message: "Task successfully scheduled for background execution.",
+      data: {
+        taskId: job.id,
+        type: job.name,
+        status: "queued",
+      },
+    });
   },
 );
