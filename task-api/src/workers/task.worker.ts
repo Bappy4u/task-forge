@@ -1,4 +1,4 @@
-import { Job, QueueScheduler, Worker } from "bullmq";
+import { Job, Worker } from "bullmq";
 import { env } from "../config/env.js";
 import { TaskType } from "../types/task.js";
 
@@ -6,10 +6,6 @@ const connection = {
   host: env.REDIS_HOST,
   port: env.REDIS_PORT,
 };
-
-new QueueScheduler("task-queue", {
-  connection,
-});
 
 const processTask = async (job: Job) => {
   console.log(`\n[worker] job ${job.id} started`, {
