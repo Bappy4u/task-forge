@@ -44,11 +44,26 @@ The API is configured to run on port `8001` and the frontend on port `3000`.
 - API URL: `http://localhost:8001/api/tasks`
 - Frontend URL: `http://localhost:3000`
 
-### 3. Run the API
+### 3. Run Redis and the BullMQ worker
+
+From the repo root, start Redis with Docker Compose:
+
+```bash
+docker compose up -d
+```
+
+Then start the backend API and worker together:
 
 ```bash
 cd task-api
 npm run dev
+npm run worker
+```
+
+Alternatively you can run both backend and worker with the repo root helper:
+
+```bash
+run-all.bat
 ```
 
 ### 4. Run the frontend
