@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -27,6 +27,13 @@ type SubmissionState = {
   status: "idle" | "loading" | "success" | "error";
   message: string;
   taskId?: string;
+};
+
+type TaskHistoryEntry = {
+  id: string;
+  type: TaskType;
+  status: "queued" | "processing" | "completed" | "failed";
+  createdAt: string;
 };
 
 const taskOptions: { value: TaskType; label: string }[] = [
@@ -107,6 +114,31 @@ const buildInitialPayload = (taskType: TaskType) => {
   );
 };
 
+const getStatusConfig = (status: SubmissionState["status"]) => {
+  switch (status) {
+    case "loading":
+      return {
+        label: "Submitting",
+        badgeClass: "border-sky-200 bg-sky-50 text-sky-700",
+      };
+    case "success":
+      return {
+        label: "Accepted",
+        badgeClass: "border-emerald-200 bg-emerald-50 text-emerald-700",
+      };
+    case "error":
+      return {
+        label: "Needs attention",
+        badgeClass: "border-rose-200 bg-rose-50 text-rose-700",
+      };
+    default:
+      return {
+        label: "Draft",
+        badgeClass: "border-slate-200 bg-slate-100 text-slate-700",
+      };
+  }
+};
+
 export function TaskDashboard() {
   const [taskType, setTaskType] = useState<TaskType>("IMAGE_RESIZE");
   const [payload, setPayload] = useState<Record<string, string>>(() =>
@@ -116,8 +148,64 @@ export function TaskDashboard() {
     status: "idle",
     message: "Choose a task and queue it for background processing.",
   });
+  const [taskHistory, setTaskHistory] = useState<TaskHistoryEntry[]>([]);
 
   const fieldList = useMemo(() => fieldDefinitions[taskType], [taskType]);
+  const selectedTaskLabel = useMemo(
+    () =>
+      taskOptions.find((option) => option.value === taskType)?.label ??
+      taskType,
+    [taskType],
+  );
+  const filledPayloadEntries = useMemo(
+    () => Object.entries(payload).filter(([, value]) => value !== ""),
+    [payload],
+  );
+  const statusConfig = getStatusConfig(submission.status);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadTasks = async () => {
+      try {
+        const response = await fetch("http://localhost:8001/api/tasks");
+
+        if (!response.ok || cancelled) {
+          return;
+        }
+
+        const parsed = (await response.json()) as {
+          data?: Array<{
+            id: string;
+            type: string;
+            status: TaskHistoryEntry["status"];
+            createdAt: string;
+          }>;
+        };
+
+        const nextTasks = (parsed.data ?? []).map((task) => ({
+          id: task.id,
+          type: (task.type as TaskType) ?? "IMAGE_RESIZE",
+          status: task.status,
+          createdAt: task.createdAt,
+        }));
+
+        if (!cancelled) {
+          setTaskHistory(nextTasks.slice(0, 5));
+        }
+      } catch {
+        // Ignore load errors and keep the current state visible.
+      }
+    };
+
+    loadTasks();
+    const interval = window.setInterval(loadTasks, 2000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
 
   const handleTaskTypeChange = (value: TaskType) => {
     setTaskType(value);
@@ -130,6 +218,17 @@ export function TaskDashboard() {
 
   const handlePayloadChange = (fieldName: string, value: string) => {
     setPayload((current) => ({ ...current, [fieldName]: value }));
+  };
+
+  const upsertTaskHistoryEntry = (
+    id: string,
+    updates: Partial<TaskHistoryEntry>,
+  ) => {
+    setTaskHistory((current) =>
+      current.map((entry) =>
+        entry.id === id ? { ...entry, ...updates } : entry,
+      ),
+    );
   };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -146,6 +245,19 @@ export function TaskDashboard() {
       acc[key] = key === "width" || key === "height" ? Number(value) : value;
       return acc;
     }, {});
+
+    const optimisticId = `task-${Date.now()}`;
+    setTaskHistory((current) =>
+      [
+        {
+          id: optimisticId,
+          type: taskType,
+          status: "queued",
+          createdAt: new Date().toLocaleString(),
+        },
+        ...current,
+      ].slice(0, 5),
+    );
 
     try {
       const response = await fetch("http://localhost:8001/api/tasks", {
@@ -167,6 +279,7 @@ export function TaskDashboard() {
           message = errorBody || message;
         }
 
+        upsertTaskHistoryEntry(optimisticId, { status: "failed" });
         setSubmission({ status: "error", message });
         return;
       }
@@ -184,14 +297,42 @@ export function TaskDashboard() {
       }
 
       const taskId =
-        parsedBody?.data?.taskId || parsedBody?.taskId || `task-${Date.now()}`;
+        parsedBody?.data?.taskId || parsedBody?.taskId || optimisticId;
+
+      upsertTaskHistoryEntry(optimisticId, {
+        id: taskId,
+        type: taskType,
+        status: "queued",
+      });
 
       setSubmission({
         status: "success",
         message: "Task queued successfully.",
         taskId,
       });
+
+      const refreshed = await fetch("http://localhost:8001/api/tasks");
+      if (refreshed.ok) {
+        const parsedRefresh = (await refreshed.json()) as {
+          data?: Array<{
+            id: string;
+            type: string;
+            status: TaskHistoryEntry["status"];
+            createdAt: string;
+          }>;
+        };
+
+        const nextTasks = (parsedRefresh.data ?? []).map((task) => ({
+          id: task.id,
+          type: (task.type as TaskType) ?? "IMAGE_RESIZE",
+          status: task.status,
+          createdAt: task.createdAt,
+        }));
+
+        setTaskHistory(nextTasks.slice(0, 5));
+      }
     } catch (error) {
+      upsertTaskHistoryEntry(optimisticId, { status: "failed" });
       setSubmission({
         status: "error",
         message:
@@ -203,37 +344,36 @@ export function TaskDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.16),_transparent_45%),linear-gradient(135deg,_#f8fafc_0%,_#eef2ff_100%)] px-4 py-10 text-slate-900 sm:px-6 lg:px-8">
-      <div className="mx-auto flex max-w-6xl flex-col gap-8">
-        <header className="space-y-4">
-          <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-sm font-medium text-slate-700 shadow-sm backdrop-blur">
-            <Sparkles size={16} className="text-sky-600" />
-            Background Task Control Center
+    <div className="min-h-screen bg-slate-50 px-4 py-8 text-slate-900 sm:px-6 lg:px-8">
+      <div className="mx-auto flex max-w-6xl flex-col gap-5">
+        <header className="space-y-2">
+          <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-sm font-medium text-slate-600">
+            <Sparkles size={16} className="text-slate-900" />
+            Background tasks
           </div>
-          <div className="space-y-2">
-            <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">
-              Queue work without blocking the main experience.
+          <div className="space-y-1">
+            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+              Queue work with a calm, focused dashboard.
             </h1>
-            <p className="max-w-2xl text-lg text-slate-600">
-              Create background tasks for image processing, media conversion,
-              document generation, and email delivery from a single dashboard.
+            <p className="max-w-2xl text-sm text-slate-600 sm:text-base">
+              Create and review background jobs without the extra noise.
             </p>
           </div>
         </header>
 
-        <div className="grid gap-8 lg:grid-cols-[1.2fr_0.8fr]">
-          <section className="rounded-3xl border border-slate-200 bg-white/90 p-6 shadow-xl shadow-slate-200/70 backdrop-blur sm:p-8">
-            <div className="mb-6 flex items-center justify-between">
+        <div className="grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
+            <div className="mb-5 flex items-center justify-between">
               <div>
-                <p className="text-sm font-semibold uppercase tracking-[0.2em] text-sky-600">
-                  Task Builder
+                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">
+                  Task builder
                 </p>
-                <h2 className="mt-1 text-2xl font-semibold text-slate-900">
+                <h2 className="mt-1 text-xl font-semibold text-slate-900">
                   Create a new job
                 </h2>
               </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-slate-600">
-                <Layers3 size={20} />
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-slate-600">
+                <Layers3 size={18} />
               </div>
             </div>
 
@@ -250,7 +390,7 @@ export function TaskDashboard() {
                   onChange={(event) =>
                     handleTaskTypeChange(event.target.value as TaskType)
                   }
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-800 outline-none transition focus:border-sky-500 focus:bg-white">
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm font-medium text-slate-800 outline-none transition focus:border-slate-400 focus:bg-white">
                   {taskOptions.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
@@ -276,7 +416,7 @@ export function TaskDashboard() {
                       onChange={(event) =>
                         handlePayloadChange(field.name, event.target.value)
                       }
-                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-sky-500 focus:bg-white"
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-800 outline-none transition focus:border-slate-400 focus:bg-white"
                       required
                     />
                   </div>
@@ -285,7 +425,7 @@ export function TaskDashboard() {
 
               <button
                 type="submit"
-                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
                 disabled={submission.status === "loading"}>
                 {submission.status === "loading" ? (
                   <>
@@ -299,26 +439,93 @@ export function TaskDashboard() {
                   </>
                 )}
               </button>
+
+              <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-700">
+                      Task preview
+                    </p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      A concise snapshot of the task you are about to dispatch.
+                    </p>
+                  </div>
+                  <span
+                    className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] ${statusConfig.badgeClass}`}>
+                    {statusConfig.label}
+                  </span>
+                </div>
+
+                <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                  <div className="rounded-xl border border-slate-200 bg-white p-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                      Task type
+                    </p>
+                    <p className="mt-1 font-semibold text-slate-900">
+                      {selectedTaskLabel}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-white p-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                      Status
+                    </p>
+                    <p className="mt-1 font-semibold text-slate-900">
+                      {submission.taskId ? "Assigned" : "Ready"}
+                    </p>
+                  </div>
+                </div>
+
+                {submission.taskId && (
+                  <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+                    <span className="font-semibold">Task ID:</span>{" "}
+                    {submission.taskId}
+                  </div>
+                )}
+
+                <div className="mt-4">
+                  <p className="text-sm font-semibold text-slate-700">
+                    Payload summary
+                  </p>
+                  <div className="mt-3 space-y-2">
+                    {filledPayloadEntries.length > 0 ? (
+                      filledPayloadEntries.map(([name, value]) => (
+                        <div
+                          key={name}
+                          className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
+                          <span className="font-medium text-slate-700">
+                            {name}
+                          </span>
+                          <span>{String(value)}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="rounded-xl border border-dashed border-slate-300 bg-white px-3 py-3 text-sm text-slate-500">
+                        Fill out the fields to preview the payload.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </section>
             </form>
           </section>
 
           <aside className="flex flex-col gap-4">
-            <div className="rounded-3xl border border-slate-200 bg-white/90 p-6 shadow-xl shadow-slate-200/70 backdrop-blur">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
               <div className="flex items-center gap-3">
-                <div className="rounded-2xl bg-sky-100 p-3 text-sky-700">
-                  <Clock3 size={18} />
+                <div className="rounded-xl bg-slate-100 p-2.5 text-slate-700">
+                  <Clock3 size={16} />
                 </div>
                 <div>
                   <p className="text-sm font-semibold text-slate-700">
-                    Queue Status
+                    Queue status
                   </p>
-                  <h3 className="text-xl font-semibold text-slate-900">
+                  <h3 className="text-lg font-semibold text-slate-900">
                     Live feedback
                   </h3>
                 </div>
               </div>
 
-              <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
                 {submission.status === "loading" && (
                   <div className="flex items-start gap-3">
                     <Clock3 size={18} className="mt-0.5 text-sky-600" />
@@ -347,7 +554,7 @@ export function TaskDashboard() {
                         {submission.message}
                       </p>
                       {submission.taskId && (
-                        <div className="mt-3 rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                        <div className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
                           <span className="font-semibold">Task ID:</span>{" "}
                           {submission.taskId}
                         </div>
@@ -386,11 +593,52 @@ export function TaskDashboard() {
               </div>
             </div>
 
-            <div className="rounded-3xl border border-slate-200 bg-slate-950 p-6 text-slate-100 shadow-xl shadow-slate-300/40">
-              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-400">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-slate-700">
+                    Recent tasks
+                  </p>
+                  <p className="mt-1 text-sm text-slate-500">
+                    The latest jobs submitted from this dashboard.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-4 space-y-2">
+                {taskHistory.length > 0 ? (
+                  taskHistory.map((task) => (
+                    <div
+                      key={task.id}
+                      className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-semibold text-slate-800">
+                          {taskOptions.find(
+                            (option) => option.value === task.type,
+                          )?.label ?? task.type}
+                        </span>
+                        <span className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">
+                          {task.status}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {task.id} • {task.createdAt}
+                      </p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-3 text-sm text-slate-500">
+                    No tasks yet. Submit one to see it appear here.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-slate-900 p-5 text-slate-100">
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
                 API endpoint
               </p>
-              <p className="mt-3 text-lg font-semibold">
+              <p className="mt-2 text-sm font-semibold">
                 POST http://localhost:8001/api/tasks
               </p>
               <p className="mt-2 text-sm text-slate-400">

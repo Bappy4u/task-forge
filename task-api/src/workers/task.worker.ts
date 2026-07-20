@@ -1,5 +1,6 @@
 import { Job, Worker } from "bullmq";
 import { env } from "../config/env.js";
+import { taskStore } from "../services/task.db.js";
 import { TaskType } from "../types/task.js";
 
 const connection = {
@@ -8,7 +9,13 @@ const connection = {
 };
 
 const processTask = async (job: Job) => {
-  console.log(`\n[worker] job ${job.id} started`, {
+  const taskId = job.id ?? `task-${Date.now()}`;
+
+  taskStore.updateTaskStatus(taskId, "processing", {
+    attempts: job.attemptsMade + 1,
+  });
+
+  console.log(`\n[worker] job ${taskId} started`, {
     type: job.name,
     data: job.data,
   });
@@ -41,11 +48,17 @@ const worker = new Worker("task-queue", processTask, {
 });
 
 worker.on("completed", (job) => {
-  console.log(`[worker] completed ${job.id} (${job.name})`);
+  const taskId = job.id ?? `task-${Date.now()}`;
+  taskStore.updateTaskStatus(taskId, "completed");
+  console.log(`[worker] completed ${taskId} (${job.name})`);
 });
 
 worker.on("failed", (job, err) => {
-  console.error(`[worker] failed ${job?.id} (${job?.name})`, err);
+  const taskId = job?.id ?? `task-${Date.now()}`;
+  taskStore.updateTaskStatus(taskId, "failed", {
+    error: err.message,
+  });
+  console.error(`[worker] failed ${taskId} (${job?.name})`, err);
 });
 
 worker.on("error", (err) => {
