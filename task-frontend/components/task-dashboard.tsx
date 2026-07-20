@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
@@ -149,7 +150,6 @@ export function TaskDashboard() {
     message: "Choose a task and queue it for background processing.",
   });
   const [taskHistory, setTaskHistory] = useState<TaskHistoryEntry[]>([]);
-  const [activeView, setActiveView] = useState<"home" | "all">("home");
 
   const fieldList = useMemo(() => fieldDefinitions[taskType], [taskType]);
   const selectedTaskLabel = useMemo(
@@ -159,9 +159,7 @@ export function TaskDashboard() {
     [taskType],
   );
   const statusConfig = getStatusConfig(submission.status);
-  const displayedTasks =
-    activeView === "all" ? taskHistory : taskHistory.slice(0, 4);
-  const hasTasks = taskHistory.length > 0;
+  const recentTasks = taskHistory.slice(0, 4);
 
   useEffect(() => {
     let cancelled = false;
@@ -367,16 +365,11 @@ export function TaskDashboard() {
             Task workspace
           </div>
           <nav className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setActiveView("home")}
-              className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
-                activeView === "home"
-                  ? "bg-slate-900 text-white"
-                  : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-              }`}>
+            <Link
+              href="/"
+              className="rounded-full bg-slate-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-slate-800">
               Home
-            </button>
+            </Link>
           </nav>
         </div>
 
@@ -546,39 +539,18 @@ export function TaskDashboard() {
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <div className="flex flex-col gap-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-700">
-                      {activeView === "all" ? "All tasks" : "Recent tasks"}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-500">
-                      {activeView === "all"
-                        ? "Browse the full task timeline from this workspace."
-                        : "The latest jobs submitted from this dashboard."}
-                    </p>
-                  </div>
-                </div>
-                {activeView === "all" ? (
-                  <button
-                    type="button"
-                    onClick={() => setActiveView("home")}
-                    className="w-fit rounded-full border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
-                    Back to home
-                  </button>
-                ) : hasTasks ? (
-                  <button
-                    type="button"
-                    onClick={() => setActiveView("all")}
-                    className="w-fit rounded-full border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
-                    View all
-                  </button>
-                ) : null}
+              <div>
+                <p className="text-sm font-semibold text-slate-700">
+                  Recent tasks
+                </p>
+                <p className="mt-1 text-sm text-slate-500">
+                  The latest jobs submitted from this dashboard.
+                </p>
               </div>
 
               <div className="mt-4 space-y-2">
                 {taskHistory.length > 0 ? (
-                  displayedTasks.map((task) => (
+                  recentTasks.map((task) => (
                     <div
                       key={task.id}
                       className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
@@ -603,6 +575,16 @@ export function TaskDashboard() {
                   </p>
                 )}
               </div>
+
+              {taskHistory.length > 0 ? (
+                <div className="mt-4">
+                  <Link
+                    href="/tasks"
+                    className="w-fit rounded-full border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
+                    View all
+                  </Link>
+                </div>
+              ) : null}
             </div>
           </aside>
         </div>
