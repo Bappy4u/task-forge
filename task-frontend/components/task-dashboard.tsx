@@ -149,6 +149,7 @@ export function TaskDashboard() {
     message: "Choose a task and queue it for background processing.",
   });
   const [taskHistory, setTaskHistory] = useState<TaskHistoryEntry[]>([]);
+  const [activeView, setActiveView] = useState<"home" | "all">("home");
 
   const fieldList = useMemo(() => fieldDefinitions[taskType], [taskType]);
   const selectedTaskLabel = useMemo(
@@ -157,11 +158,10 @@ export function TaskDashboard() {
       taskType,
     [taskType],
   );
-  const filledPayloadEntries = useMemo(
-    () => Object.entries(payload).filter(([, value]) => value !== ""),
-    [payload],
-  );
   const statusConfig = getStatusConfig(submission.status);
+  const displayedTasks =
+    activeView === "all" ? taskHistory : taskHistory.slice(0, 4);
+  const hasTasks = taskHistory.length > 0;
 
   useEffect(() => {
     let cancelled = false;
@@ -191,7 +191,7 @@ export function TaskDashboard() {
         }));
 
         if (!cancelled) {
-          setTaskHistory(nextTasks.slice(0, 5));
+          setTaskHistory(nextTasks.slice(0, 4));
         }
       } catch {
         // Ignore load errors and keep the current state visible.
@@ -256,7 +256,7 @@ export function TaskDashboard() {
           createdAt: new Date().toLocaleString(),
         },
         ...current,
-      ].slice(0, 5),
+      ].slice(0, 4),
     );
 
     try {
@@ -329,7 +329,7 @@ export function TaskDashboard() {
           createdAt: task.createdAt,
         }));
 
-        setTaskHistory(nextTasks.slice(0, 5));
+        setTaskHistory(nextTasks.slice(0, 4));
       }
     } catch (error) {
       upsertTaskHistoryEntry(optimisticId, { status: "failed" });
@@ -360,6 +360,25 @@ export function TaskDashboard() {
             </p>
           </div>
         </header>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 shadow-sm backdrop-blur">
+          <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
+            <Sparkles size={16} className="text-slate-900" />
+            Task workspace
+          </div>
+          <nav className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setActiveView("home")}
+              className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                activeView === "home"
+                  ? "bg-slate-900 text-white"
+                  : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+              }`}>
+              Home
+            </button>
+          </nav>
+        </div>
 
         <div className="grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">
           <section className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
@@ -439,73 +458,6 @@ export function TaskDashboard() {
                   </>
                 )}
               </button>
-
-              <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-700">
-                      Task preview
-                    </p>
-                    <p className="mt-1 text-sm text-slate-500">
-                      A concise snapshot of the task you are about to dispatch.
-                    </p>
-                  </div>
-                  <span
-                    className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] ${statusConfig.badgeClass}`}>
-                    {statusConfig.label}
-                  </span>
-                </div>
-
-                <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                  <div className="rounded-xl border border-slate-200 bg-white p-3">
-                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-                      Task type
-                    </p>
-                    <p className="mt-1 font-semibold text-slate-900">
-                      {selectedTaskLabel}
-                    </p>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 bg-white p-3">
-                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-                      Status
-                    </p>
-                    <p className="mt-1 font-semibold text-slate-900">
-                      {submission.taskId ? "Assigned" : "Ready"}
-                    </p>
-                  </div>
-                </div>
-
-                {submission.taskId && (
-                  <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
-                    <span className="font-semibold">Task ID:</span>{" "}
-                    {submission.taskId}
-                  </div>
-                )}
-
-                <div className="mt-4">
-                  <p className="text-sm font-semibold text-slate-700">
-                    Payload summary
-                  </p>
-                  <div className="mt-3 space-y-2">
-                    {filledPayloadEntries.length > 0 ? (
-                      filledPayloadEntries.map(([name, value]) => (
-                        <div
-                          key={name}
-                          className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
-                          <span className="font-medium text-slate-700">
-                            {name}
-                          </span>
-                          <span>{String(value)}</span>
-                        </div>
-                      ))
-                    ) : (
-                      <p className="rounded-xl border border-dashed border-slate-300 bg-white px-3 py-3 text-sm text-slate-500">
-                        Fill out the fields to preview the payload.
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </section>
             </form>
           </section>
 
@@ -594,20 +546,39 @@ export function TaskDashboard() {
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-semibold text-slate-700">
-                    Recent tasks
-                  </p>
-                  <p className="mt-1 text-sm text-slate-500">
-                    The latest jobs submitted from this dashboard.
-                  </p>
+              <div className="flex flex-col gap-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-700">
+                      {activeView === "all" ? "All tasks" : "Recent tasks"}
+                    </p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      {activeView === "all"
+                        ? "Browse the full task timeline from this workspace."
+                        : "The latest jobs submitted from this dashboard."}
+                    </p>
+                  </div>
                 </div>
+                {activeView === "all" ? (
+                  <button
+                    type="button"
+                    onClick={() => setActiveView("home")}
+                    className="w-fit rounded-full border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
+                    Back to home
+                  </button>
+                ) : hasTasks ? (
+                  <button
+                    type="button"
+                    onClick={() => setActiveView("all")}
+                    className="w-fit rounded-full border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
+                    View all
+                  </button>
+                ) : null}
               </div>
 
               <div className="mt-4 space-y-2">
                 {taskHistory.length > 0 ? (
-                  taskHistory.map((task) => (
+                  displayedTasks.map((task) => (
                     <div
                       key={task.id}
                       className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
@@ -633,21 +604,22 @@ export function TaskDashboard() {
                 )}
               </div>
             </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-slate-900 p-5 text-slate-100">
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
-                API endpoint
-              </p>
-              <p className="mt-2 text-sm font-semibold">
-                POST http://localhost:8001/api/tasks
-              </p>
-              <p className="mt-2 text-sm text-slate-400">
-                The form sends a JSON payload with the selected task type and
-                its required fields.
-              </p>
-            </div>
           </aside>
         </div>
+
+        <footer className="flex justify-center pt-1 text-sm text-slate-500">
+          <span>
+            Made with love by{" "}
+            <a
+              href="https://bappy4u.github.io/"
+              target="_blank"
+              rel="noreferrer"
+              className="transition hover:text-slate-700 hover:underline">
+              Bappy
+            </a>
+            .
+          </span>
+        </footer>
       </div>
     </div>
   );
